@@ -1,0 +1,119 @@
+\documentclass[a4paper,12pt]{article}
+
+% Font
+\usepackage[T1]{fontenc}
+\usepackage{gentium}
+
+% Math packages
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{bm}
+\usepackage{verbatim}
+\usepackage{hyperref}
+
+% Define symbol shortcuts
+\newcommand{\cc}{\mathcal{C}}
+\newcommand{\dd}{\mathcal{D}}
+\newcommand{\hh}{\mathcal{H}}
+\newcommand{\xx}{{\bm x}}
+\newcommand{\yy}{{\bm y}}
+
+% Math environment
+\newtheorem*{thm}{Theorem}
+
+% Better list management:
+% - vertical spacing in lists
+% - items in lists start with dash not bullet point.
+\usepackage{enumitem}
+\setlist{label=\textemdash,
+  itemsep=0pt, topsep=3pt, partopsep=0pt} 
+
+% Include graphics
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+% Page format 
+\usepackage[top=2cm,left=2cm,right=2cm,bottom=2cm]{geometry}
+
+\begin{document}
+%%% HEADER
+% \raisebox{0.6in}[0in]{\makebox[\textwidth][r]{\it Unproofed version }}
+% \vspace{-0.7in}
+
+\begin{center}
+\bf\large High-Performance Computing \\
+Project : parallel Gauss-Seidel method
+\end{center}
+
+\noindent
+Student: Horace GUY
+\hfill
+Report on project, IS1260 2017
+
+\noindent
+\rule{\textwidth}{1pt}
+
+\medskip
+
+\section{Introduction}
+
+The assignment was to implement the Gauss-Seidel method in parallel. It aims to achieve the resolution of a linear system of the form :
+\[ Ax = b \]
+where A, in the code noted {\tt mat} or {\tt matrix}, is a square matrix, and b the parameters vector denoted by {\tt param}.
+The scheme is to iterate a set of operations, from an initial vector {\tt init} until convergence at the precision level {\tt epsilon }desired.
+
+The method is guaranteed to converge for strictly dominant diagonal matrixes, thus I only used these kind of samples to test the program.
+
+I closely followed the method described by Yueqiang Shang, Faculty of Science, Xi'an Jiaotong University, published in Elsevier, section Computers and Mathematics with Applications 57 (2009) 1369 \_ 1376. The article is available at \url{http://www.sciencedirect.com/science/article/pii/S089812210900042X}.
+
+In regard to simplicity, and because of a lack of time, I only implemented the method for the case where the parameter g, the height of the blocks that split the matrix and vectors, satisfies the following : \emph{g divides dim}, the dimension of the matrix and vector. 
+
+\section{Structure of the program}
+According to the reference document, the subalgorithms followed by the processors are as follow :
+\paragraph{master processor}
+\begin{enumerate}
+\item Check that the values given are compatible (g divides dim).
+\item Load data from the text files init.txt, param.txt, mat.txt.
+\item Broadcast {\tt init} and {\tt param} vector to the slaves.
+\item scatter the matrix to the slaves (including p0), with the procedure {\tt scatter\_all()}. This procedure uses a tensor {\tt blocs\_feeder[][][]} to partition the matrix in blocs of size {\tt p*g}.
+\item At the end of each iteration in the {\tt while ((k < max\_iter)and(sign == 0)) \{...\} }, receive the result {\tt x\_new[]} from processor {\tt last}, overwrite it in {\tt x\_pred[]} and broadcast it to slaves in the same buffer.
+\item If algorithm converged with precision {\tt epsilon} or {\tt max\_iter} is reached, print the result and write it in the document "final.txt" if converged.
+\item Otherwise, begin next iteration.
+\end{enumerate}
+
+\paragraph{slave processor number j >= 0}
+\begin{enumerate}
+\item Receive {\tt init, param} vectors from p0's broadcast.
+\item Receive the data {\tt own\_blocs[][][]} from p0's scatter of the matrix.
+\item For {\tt k = 0, ..., max\_iter} or until convergence :
+\begin{enumerate}
+	\item set sign = 1, compute $t_i^{(k)}$ values for appropriated $i$s, with {\tt compute\_ts()} , stored in the {\tt T[][]} array. Launch {\tt init\_zs()} which initializes the values of $z_i^{(k+1)}$ at 0 in the {\tt Z[][]} array, for values of $i$ in the range of proc. j.
+	\item For qb = 0, ...., {\tt own\_blocs\_count -1 } :
+		\begin{enumerate}
+		\item receive sign in the buffer {\tt sign} and $x^{(k+1)}_0, ... x^{(k+1)}_{qb*p*g + j*g -1}$ in the buffer {\tt x\_new[]} from (j-1)\%p -th processor.
+		\item compute $x^{(k+1)}_{qb*p*g + j*g}... x^{(k+1)}_{qb*p*g + (j+1)*g}$ and complete computation of corresponding values of $z_i^{(k+1)}$ with the procedure {\tt compute\_missing\_z()}; check if requirement of precision is reached - if not, set sign = 0.
+		\item send $x^{(k+1)}_{0}... x^{(k+1)}_{qb*p*g + (j+1)*g}$ and sign to (j+1)\%p-th processor
+		\item compute portions of partial $z_i^{(k+1)}$ sums, involving the items freshly collected and computed, with {\tt update\_zs()}. The number of such relevant values of $x_i^{(k+1)}$ is p*g if {\tt qb == 0}, and {\tt my\_rank*g} otherwise.
+		\end{enumerate}
+	\item If {\tt my\_rank == last}, that means that I am the one ending the iteration ; i.e. I have the complete {\tt x\_new[]} vector; I send it to p0. 
+	
+	\item I receive the broadcast of {\tt x\_new[]} performed by p0, and stores it in my own {\tt x\_pred[]} buffer.
+	\end{enumerate}
+\end{enumerate}
+
+\section{Results}
+To try the resolution method, I wrote a "create\_samples.c" program that provides the user with strictly dominant diagonal matrixes, random param vector and zero init vector. One has to run the .exe application and choose the value of {\tt dim} to create new arrays. Then one has to copy and paste the files "mat.txt", "init.txt" and "param.txt" in the parent folder to run the resolution algorithm.
+
+I have tried the program with an initialisation at zero vector, random parameter $b$ with values in the interval [0,dim]. The matrixes are the ones used by M. Shang in the articles. 
+
+After a lot of debugging, the algorithm seems to work fine whenever $g$ divides $dim$. Even in the case of $p$ not dividing $dim/g$, the program terminates and often converges quickly. One has to change manually the  parameters such as {\tt g, epsilon, max\_iter} at the beginning of the {\tt main()} function.
+
+I provided an example of size 12 in this folder, in order to print relevant informations without flooding the command line screen. 
+
+The major lead of improvements are first the case when $g$ doesn't divide $dim$. Also, the arrays {\tt float matrix[][]} and {\tt float blocs\_feeder[][][]} are defined in every processor, such that each local memory allocates two times a {\tt float dim * dim} space, and then doesn't use it. This could be fixed, but some tricky manipulations of pointers are required and I didn't manage to implement it very well when I tried.
+\vspace{0,3cm}
+
+
+\end{document}
